@@ -28,6 +28,7 @@
 #include "burst_gpio.h"
 #include "burst_version.h"
 #include "spectrum.h"
+#include "wifi_sniff.h"
 #if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
 #include "ring_capture.h"
 #endif
@@ -88,8 +89,8 @@ static void reply(const char *s) {
 #include "burst_gain.h"
 #include "burst_limits.h"
 
+static unsigned calibrated_mhz;
 static void prepare_rx(void) {
-    static unsigned calibrated_mhz;
     if (rx_ready && !rx_recalibration_stale()) return;
 #if CONFIG_IDF_TARGET_ESP32C61
     burst_gain_mirror(-1);
@@ -316,8 +317,15 @@ void app_main(void) {
 #define BURST_MAX_RATE (CONFIG_IDF_TARGET_ESP32C6 ? 6 : 5)
 #include "burst_commands.h"
 
+/* After the Wi-Fi stack has had the radio (SNIFF), redo the receive-only calibration and SDR overrides. */
+static void sniff_restore_sdr(void) {
+    rx_ready = false;
+    calibrated_mhz = 0;
+}
+
 static void handle_command(char *line) {
     if (burst_version_command(line)) return;
+    if (wifi_sniff_command(line, sniff_restore_sdr)) return;
     if (burst_gpio_command(line)) return;
 #ifdef RING_PROBE
     if (ring_probe_command(line)) return;
@@ -344,7 +352,7 @@ static void handle_command(char *line) {
 #else
             " LPF LPF12"
 #endif
-            " ALPF"
+            " ALPF SNIFF"
 #if CONFIG_ESP_SDR_UART_ENABLED
             " DUALSERIAL"
 #endif
