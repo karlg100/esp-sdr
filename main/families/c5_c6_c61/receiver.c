@@ -323,9 +323,64 @@ static void sniff_restore_sdr(void) {
     calibrated_mhz = 0;
 }
 
+/* CAPSNIFF <channel> <captures> <rate_code> [samples]
+ * Experiment: listen with the Wi-Fi modem on <channel> (stock PHY setup, hardware AGC) and, while it listens, take raw
+ * I/Q captures with the stock dump engine, without the SDR's overrides (no manual gain, no recalibration, no filter).
+ * Each capture: "CS <i> <start_us> <elapsed_us> <frames_so_far> <ok>" then the usual DATA reply (IQ8).
+ * Then every frame the modem heard, with timestamps ("F ..." lines, see wifi_sniff.h), and "CAPSNIFFEND". */
+static bool capsniff_command(const char *line) {
+    if (strncmp(line, "CAPSNIFF ", 9)) return false;
+    unsigned ch, caps, rate, n = IQ_WORDS; char extra;
+    int f = sscanf(line, "CAPSNIFF %u %u %u %u %c", &ch, &caps, &rate, &n, &extra);
+    if (f < 3 || f > 4 || caps < 1 || caps > 50 || rate > 5 || n < 256 || n > IQ_WORDS) {
+        reply("ERR capsniff_args\n");
+        return true;
+    }
+    unsigned sw = 0; char h[120];
+    int err = wifi_sniff_begin(ch, true, &sw);
+    wifi_sniff_log(false);
+    if (err) {
+        snprintf(h, sizeof(h), "ERR capsniff_channel %d\n", err);
+        reply(h);
+        wifi_sniff_release(sniff_restore_sdr);
+        return true;
+    }
+    snprintf(h, sizeof(h), "CAPSNIFF %u %u %u %u %u\n", ch, caps, rate, n, sw);
+    reply(h);
+    vTaskDelay(pdMS_TO_TICKS(30));                                   /* let the modem settle on the channel */
+    for (unsigned i = 0; i < caps; i++) {
+        for (unsigned j = 0; j < n; j++) IQ_BUFFER[j] = 0xa5a0055au;
+        for (unsigned j = 0; j < 4; j++) IQ_BUFFER[n + j] = 0x5a5aa5a5u ^ j;
+        wifi_sniff_log(true);                                        /* log frames from just before the capture... */
+        vTaskDelay(pdMS_TO_TICKS(3));
+        unsigned f0 = wifi_sniff_frames();
+        uint32_t owner = REG_READ(SRAM_OWNER_REG);
+        int64_t t0 = esp_timer_get_time();
+        stock_capture(n, rate);
+        uint32_t elapsed = (uint32_t)(esp_timer_get_time() - t0);
+        REG_WRITE(SRAM_OWNER_REG, owner);
+        unsigned f1 = wifi_sniff_frames();
+        bool ok = true;
+        for (unsigned j = 0; j < n && ok; j++) if (IQ_BUFFER[j] == 0xa5a0055au) ok = false;
+        for (unsigned j = 0; j < 4 && ok; j++) if (IQ_BUFFER[n + j] != (0x5a5aa5a5u ^ j)) ok = false;
+        vTaskDelay(pdMS_TO_TICKS(5));                                /* ...until just after it (callbacks lag a little) */
+        wifi_sniff_log(false);
+        snprintf(h, sizeof(h), "CS %u %lld %lu %u %d %u\n", i, (long long)t0, (unsigned long)elapsed, wifi_sniff_frames(), ok, f1 - f0);
+        reply(h);
+        if (ok) burst_send_capture(n, 16, elapsed);
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+    wifi_sniff_stop();
+    wifi_sniff_report_events();
+    reply("CAPSNIFFEND\n");
+    wifi_sniff_release(sniff_restore_sdr);
+    return true;
+}
+
 static void handle_command(char *line) {
     if (burst_version_command(line)) return;
     if (wifi_sniff_command(line, sniff_restore_sdr)) return;
+    if (capsniff_command(line)) return;
     if (burst_gpio_command(line)) return;
 #ifdef RING_PROBE
     if (ring_probe_command(line)) return;
@@ -352,7 +407,7 @@ static void handle_command(char *line) {
 #else
             " LPF LPF12"
 #endif
-            " ALPF SNIFF"
+            " ALPF SNIFF CAPSNIFF"
 #if CONFIG_ESP_SDR_UART_ENABLED
             " DUALSERIAL"
 #endif

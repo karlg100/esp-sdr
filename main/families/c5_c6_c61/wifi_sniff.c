@@ -42,6 +42,20 @@ static unsigned n_addr, n_bss, drop_addr, drop_bss;
 static uint32_t t_frames, t_mgmt, t_ctrl, t_data, t_bad, t_bytes, fmt_count[8];
 static int32_t nf_sum;
 
+/* Per-frame event log for CAPSNIFF (time-aligning decoded frames with raw I/Q captures). */
+typedef struct {
+    int64_t cb_us;            /* esp_timer time when the callback ran */
+    uint32_t rx_ts;           /* hardware RX timestamp (us, MAC clock) */
+    int8_t rssi;
+    uint8_t fmt, state, pad;
+    uint16_t len, fc;
+    uint8_t a1[6], a2[6];
+} frame_ev_t;
+#define MAX_EV 600
+static frame_ev_t *evs;
+static volatile unsigned n_ev, drop_ev;
+static volatile bool logging;
+
 static void reply(const char *s) { burst_serial_send(s, strlen(s)); }
 
 static addr_entry_t *addr_slot(const uint8_t *mac) {
@@ -107,6 +121,17 @@ static void rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
     unsigned len = rx->sig_len > 4 ? rx->sig_len - 4 : 0;          /* without the FCS */
     t_frames++;
     nf_sum += rx->noise_floor;
+    if (logging) {
+        if (n_ev < MAX_EV) {
+            frame_ev_t *e = &evs[n_ev];
+            e->cb_us = esp_timer_get_time(); e->rx_ts = rx->timestamp; e->rssi = rx->rssi; e->fmt = rx->cur_bb_format;
+            e->state = rx->rx_state; e->len = rx->sig_len;
+            e->fc = rx->sig_len >= 2 ? (p[0] | (p[1] << 8)) : 0;
+            if (rx->sig_len >= 10) memcpy(e->a1, p + 4, 6); else memset(e->a1, 0, 6);
+            if (rx->sig_len >= 16) memcpy(e->a2, p + 10, 6); else memset(e->a2, 0, 6);
+            n_ev++;
+        } else drop_ev++;
+    }
     if (rx->cur_bb_format < 8) fmt_count[rx->cur_bb_format]++;
     if (rx->rx_state) { t_bad++; return; }                          /* failed checksum: count only */
     if (len < 10) return;
@@ -164,21 +189,21 @@ static bool valid_channel(unsigned ch) {
 #define MACF "%02x:%02x:%02x:%02x:%02x:%02x"
 #define MACA(m) m[0], m[1], m[2], m[3], m[4], m[5]
 
-bool wifi_sniff_command(const char *line, void (*restore_sdr)(void)) {
-    if (strncmp(line, "SNIFF ", 6)) return false;
-    unsigned ch, ms; char extra;
-    if (sscanf(line, "SNIFF %u %u %c", &ch, &ms, &extra) != 2 || !valid_channel(ch) || ms < 50 || ms > 10000) {
-        reply("ERR sniff_args\n");
-        return true;
-    }
-    static bool configured;
-    if (!addrs) addrs = heap_caps_calloc(MAX_ADDR, sizeof(addr_entry_t), MALLOC_CAP_8BIT);
-    if (!bsses) bsses = heap_caps_calloc(MAX_BSS, sizeof(bss_entry_t), MALLOC_CAP_8BIT);
-    if (!addrs || !bsses) { reply("ERR sniff_memory\n"); return true; }
+static void reset_tables(void) {
     n_addr = n_bss = drop_addr = drop_bss = 0;
     t_frames = t_mgmt = t_ctrl = t_data = t_bad = t_bytes = 0; nf_sum = 0;
     memset(fmt_count, 0, sizeof(fmt_count));
+    n_ev = drop_ev = 0;
+}
 
+int wifi_sniff_begin(unsigned ch, bool log_frames, unsigned *switch_us) {
+    static bool configured;
+    if (!valid_channel(ch)) return -1;
+    if (!addrs) addrs = heap_caps_calloc(MAX_ADDR, sizeof(addr_entry_t), MALLOC_CAP_8BIT);
+    if (!bsses) bsses = heap_caps_calloc(MAX_BSS, sizeof(bss_entry_t), MALLOC_CAP_8BIT);
+    if (log_frames && !evs) evs = heap_caps_calloc(MAX_EV, sizeof(frame_ev_t), MALLOC_CAP_8BIT);
+    if (!addrs || !bsses || (log_frames && !evs)) return -2;
+    reset_tables();
     /* Hand the radio back to the Wi-Fi stack: a stop/start reloads the PHY's stock receive setup, undoing the SDR's
      * test-mode overrides (manual gain, TX path off, per-LO DC tables). No transmit calibration is repeated. */
     int64_t t0 = esp_timer_get_time();
@@ -202,23 +227,61 @@ bool wifi_sniff_command(const char *line, void (*restore_sdr)(void)) {
         esp_wifi_set_promiscuous(true);
         err = esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
     }
-    unsigned switch_us = (unsigned)(esp_timer_get_time() - t0);
-    char h[200];
-    if (err != ESP_OK) {
-        esp_wifi_set_promiscuous_rx_cb(NULL);
-        snprintf(h, sizeof(h), "ERR sniff_channel %d\n", (int)err);
+    if (switch_us) *switch_us = (unsigned)(esp_timer_get_time() - t0);
+    if (err != ESP_OK) { esp_wifi_set_promiscuous_rx_cb(NULL); return (int)err; }
+    logging = log_frames;
+    active = true;
+    return 0;
+}
+
+void wifi_sniff_stop(void) {
+    active = false; logging = false;
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    vTaskDelay(pdMS_TO_TICKS(5));                                    /* let a callback in flight finish */
+}
+
+void wifi_sniff_release(void (*restore_sdr)(void)) {
+    /* Back to the state the SDR expects (Wi-Fi running in promiscuous mode, no callback); the SDR redoes its
+     * receive-only calibration and gain overrides before the next capture. */
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    restore_sdr();
+}
+
+unsigned wifi_sniff_frames(void) { return t_frames; }
+void wifi_sniff_log(bool on) { logging = on && evs; }
+
+void wifi_sniff_report_events(void) {
+    char h[160];
+    for (unsigned i = 0; i < n_ev; i++) {
+        frame_ev_t *e = &evs[i];
+        snprintf(h, sizeof(h), "F %lld %lu %d %u %u %u %04x " MACF " " MACF "\n", (long long)e->cb_us, (unsigned long)e->rx_ts, e->rssi,
+                 e->fmt, e->state, e->len, e->fc, MACA(e->a1), MACA(e->a2));
         reply(h);
-        esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-        restore_sdr();
+    }
+    snprintf(h, sizeof(h), "FEND %u %u\n", n_ev, drop_ev);
+    reply(h);
+}
+
+bool wifi_sniff_command(const char *line, void (*restore_sdr)(void)) {
+    if (strncmp(line, "SNIFF ", 6)) return false;
+    unsigned ch, ms; char extra;
+    if (sscanf(line, "SNIFF %u %u %c", &ch, &ms, &extra) != 2 || !valid_channel(ch) || ms < 50 || ms > 10000) {
+        reply("ERR sniff_args\n");
+        return true;
+    }
+    unsigned switch_us = 0;
+    char h[200];
+    int err = wifi_sniff_begin(ch, false, &switch_us);
+    if (err) {
+        snprintf(h, sizeof(h), "ERR sniff_channel %d\n", err);
+        reply(h);
+        wifi_sniff_release(restore_sdr);
         return true;
     }
     snprintf(h, sizeof(h), "SNIFF %u %u\n", ch, ms);
     reply(h);
-    active = true;
     vTaskDelay(pdMS_TO_TICKS(ms));
-    active = false;
-    esp_wifi_set_promiscuous_rx_cb(NULL);
-    vTaskDelay(pdMS_TO_TICKS(5));                                    /* let a callback in flight finish */
+    wifi_sniff_stop();
 
     snprintf(h, sizeof(h), "T %lu %lu %lu %lu %lu %lu %ld %lu %lu %lu %lu %lu %lu %lu %lu %u\n",
              (unsigned long)t_frames, (unsigned long)t_mgmt, (unsigned long)t_ctrl, (unsigned long)t_data, (unsigned long)t_bad,
@@ -247,10 +310,6 @@ bool wifi_sniff_command(const char *line, void (*restore_sdr)(void)) {
     }
     snprintf(h, sizeof(h), "SNIFFEND 0 %u %u\n", drop_addr, drop_bss);
     reply(h);
-
-    /* Back to the state the SDR expects (Wi-Fi running in promiscuous mode, no callback) and force it to redo its
-     * receive-only calibration and gain overrides before the next capture. */
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-    restore_sdr();
+    wifi_sniff_release(restore_sdr);
     return true;
 }
