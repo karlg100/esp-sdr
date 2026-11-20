@@ -18,3 +18,12 @@
  * max_bw (MHz) is the widest bandwidth announced in the frames' own PHY headers (HT/VHT/HE), 0 if unknown.
  */
 bool wifi_sniff_command(const char *line, void (*restore_sdr)(void));
+
+/* Building blocks for combined modes (CAPSNIFF in receiver.c): start listening on a channel with the PHY in its
+ * stock Wi-Fi setup (optionally logging every frame with timestamps), stop listening, give the radio back. */
+int wifi_sniff_begin(unsigned ch, bool log_frames, unsigned *switch_us);   /* 0 = ok, -1 bad channel, -2 no memory, else esp_err */
+void wifi_sniff_stop(void);
+void wifi_sniff_release(void (*restore_sdr)(void));
+unsigned wifi_sniff_frames(void);
+void wifi_sniff_log(bool on);          /* switch the per-frame event log on/off (after a begin with log_frames) */
+void wifi_sniff_report_events(void);   /* "F <cb_us> <rx_ts> <rssi> <fmt> <rx_state> <len> <fc> <addr1> <addr2>" ... "FEND <n> <dropped>" */
