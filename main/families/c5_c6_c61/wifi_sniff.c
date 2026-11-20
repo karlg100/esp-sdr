@@ -2,6 +2,7 @@
  * See wifi_sniff.h for the protocol. Everything here is receive-only: promiscuous mode never transmits. */
 #include "wifi_sniff.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include "esp_timer.h"
@@ -28,7 +29,7 @@ typedef struct {
     uint8_t bssid[6];
     int8_t rssi_max, color;
     int32_t rssi_sum;
-    uint32_t beacons;
+    uint32_t beacons, rx_n;
     uint8_t ds_ch, ht_second, vht_width, vht_c0, vht_c1, he, ssid_len;
     uint16_t interval;
     char ssid[32];
@@ -150,6 +151,7 @@ static void rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
             bss_entry_t *b = bss_slot(a3);
             if (b) {
                 if (sub == 8) b->beacons++;
+                b->rx_n++;
                 b->rssi_sum += rx->rssi;
                 if (rx->rssi > b->rssi_max) b->rssi_max = rx->rssi;
                 parse_beacon(p, len, b);
@@ -262,6 +264,35 @@ void wifi_sniff_report_events(void) {
     reply(h);
 }
 
+static void report_tables(unsigned switch_us) {
+    char h[200];
+    snprintf(h, sizeof(h), "T %lu %lu %lu %lu %lu %lu %ld %lu %lu %lu %lu %lu %lu %lu %lu %u\n",
+             (unsigned long)t_frames, (unsigned long)t_mgmt, (unsigned long)t_ctrl, (unsigned long)t_data, (unsigned long)t_bad,
+             (unsigned long)t_bytes, t_frames ? (long)(nf_sum / (int32_t)t_frames) : 0L,
+             (unsigned long)fmt_count[0], (unsigned long)fmt_count[1], (unsigned long)fmt_count[2], (unsigned long)fmt_count[3],
+             (unsigned long)fmt_count[4], (unsigned long)fmt_count[5], (unsigned long)fmt_count[6], (unsigned long)fmt_count[7], switch_us);
+    reply(h);
+    for (unsigned i = 0; i < n_bss; i++) {
+        bss_entry_t *b = &bsses[i];
+        unsigned seen = b->rx_n ? b->rx_n : 1;
+        char ssid[65] = "-";
+        if (b->ssid_len) for (unsigned k = 0; k < b->ssid_len; k++) snprintf(ssid + 2 * k, 3, "%02x", (uint8_t)b->ssid[k]);
+        snprintf(h, sizeof(h), "B " MACF " %d %d %lu %u %u %u %u %u %u %d %u %s\n", MACA(b->bssid), b->rssi_max,
+                 (int)(b->rssi_sum / (int32_t)seen), (unsigned long)b->beacons, b->ds_ch, b->ht_second, b->vht_width, b->vht_c0,
+                 b->vht_c1, b->he, b->color, b->interval, ssid);
+        reply(h);
+    }
+    for (unsigned i = 0; i < n_addr; i++) {
+        addr_entry_t *a = &addrs[i];
+        char bs[18] = "-";
+        if (a->has_bssid) snprintf(bs, sizeof(bs), MACF, MACA(a->bssid));
+        snprintf(h, sizeof(h), "A " MACF " %s %lu %lu %d %d %u %u %d %c %u\n", MACA(a->mac), bs, (unsigned long)a->frames,
+                 (unsigned long)a->bytes, a->rssi_max, (int)(a->rssi_sum / (int32_t)a->frames), a->retries, a->fmt_mask, a->color,
+                 a->role, a->max_bw);
+        reply(h);
+    }
+}
+
 bool wifi_sniff_command(const char *line, void (*restore_sdr)(void)) {
     if (strncmp(line, "SNIFF ", 6)) return false;
     unsigned ch, ms; char extra;
@@ -283,32 +314,64 @@ bool wifi_sniff_command(const char *line, void (*restore_sdr)(void)) {
     vTaskDelay(pdMS_TO_TICKS(ms));
     wifi_sniff_stop();
 
-    snprintf(h, sizeof(h), "T %lu %lu %lu %lu %lu %lu %ld %lu %lu %lu %lu %lu %lu %lu %lu %u\n",
-             (unsigned long)t_frames, (unsigned long)t_mgmt, (unsigned long)t_ctrl, (unsigned long)t_data, (unsigned long)t_bad,
-             (unsigned long)t_bytes, t_frames ? (long)(nf_sum / (int32_t)t_frames) : 0L,
-             (unsigned long)fmt_count[0], (unsigned long)fmt_count[1], (unsigned long)fmt_count[2], (unsigned long)fmt_count[3],
-             (unsigned long)fmt_count[4], (unsigned long)fmt_count[5], (unsigned long)fmt_count[6], (unsigned long)fmt_count[7], switch_us);
-    reply(h);
-    for (unsigned i = 0; i < n_bss; i++) {
-        bss_entry_t *b = &bsses[i];
-        unsigned seen = b->beacons ? b->beacons : 1;
-        char ssid[65] = "-";
-        if (b->ssid_len) for (unsigned k = 0; k < b->ssid_len; k++) snprintf(ssid + 2 * k, 3, "%02x", (uint8_t)b->ssid[k]);
-        snprintf(h, sizeof(h), "B " MACF " %d %d %lu %u %u %u %u %u %u %d %u %s\n", MACA(b->bssid), b->rssi_max,
-                 (int)(b->rssi_sum / (int32_t)seen), (unsigned long)b->beacons, b->ds_ch, b->ht_second, b->vht_width, b->vht_c0,
-                 b->vht_c1, b->he, b->color, b->interval, ssid);
-        reply(h);
-    }
-    for (unsigned i = 0; i < n_addr; i++) {
-        addr_entry_t *a = &addrs[i];
-        char bs[18] = "-";
-        if (a->has_bssid) snprintf(bs, sizeof(bs), MACF, MACA(a->bssid));
-        snprintf(h, sizeof(h), "A " MACF " %s %lu %lu %d %d %u %u %d %c %u\n", MACA(a->mac), bs, (unsigned long)a->frames,
-                 (unsigned long)a->bytes, a->rssi_max, (int)(a->rssi_sum / (int32_t)a->frames), a->retries, a->fmt_mask, a->color,
-                 a->role, a->max_bw);
-        reply(h);
-    }
+    report_tables(switch_us);
     snprintf(h, sizeof(h), "SNIFFEND 0 %u %u\n", drop_addr, drop_bss);
+    reply(h);
+    wifi_sniff_release(restore_sdr);
+    return true;
+}
+
+/* SURVEY <ms_per_channel> <ch,ch,...>: one handover to the Wi-Fi stack, then listen on each channel in turn.
+ * Reply: "SURVEY <n> <ms>", then per channel "SV <ch> <ms>" + the T/B/A lines of SNIFF + "SVEND <ch> <a_dropped> <b_dropped>",
+ * then "SURVEYEND <n>". A channel the stack refuses reports "SVERR <ch> <err>". */
+bool wifi_survey_command(const char *line, void (*restore_sdr)(void)) {
+    if (strncmp(line, "SURVEY ", 7)) return false;
+    unsigned ms, chs[64], n = 0;
+    const char *p = line + 7;
+    char *end;
+    ms = (unsigned)strtoul(p, &end, 10);
+    if (end == p || ms < 30 || ms > 5000) { reply("ERR survey_args\n"); return true; }
+    p = end;
+    while (*p == ' ') p++;
+    while (*p && n < 64) {
+        unsigned ch = (unsigned)strtoul(p, &end, 10);
+        if (end == p) break;
+        if (valid_channel(ch)) chs[n++] = ch;
+        p = end;
+        while (*p == ',' || *p == ' ') p++;
+    }
+    if (!n) { reply("ERR survey_args\n"); return true; }
+    unsigned switch_us = 0;
+    char h[96];
+    int err = wifi_sniff_begin(chs[0], false, &switch_us);
+    if (err) {
+        snprintf(h, sizeof(h), "ERR survey_start %d\n", err);
+        reply(h);
+        wifi_sniff_release(restore_sdr);
+        return true;
+    }
+    snprintf(h, sizeof(h), "SURVEY %u %u\n", n, ms);
+    reply(h);
+    for (unsigned i = 0; i < n; i++) {
+        active = false;
+        vTaskDelay(pdMS_TO_TICKS(2));
+        reset_tables();
+        int64_t t0 = esp_timer_get_time();
+        esp_err_t e = i ? esp_wifi_set_channel(chs[i], WIFI_SECOND_CHAN_NONE) : ESP_OK;
+        unsigned hop_us = (unsigned)(esp_timer_get_time() - t0) + (i ? 0 : switch_us);
+        if (e != ESP_OK) { snprintf(h, sizeof(h), "SVERR %u %d\n", chs[i], (int)e); reply(h); continue; }
+        active = true;
+        vTaskDelay(pdMS_TO_TICKS(ms));
+        active = false;
+        vTaskDelay(pdMS_TO_TICKS(2));
+        snprintf(h, sizeof(h), "SV %u %u\n", chs[i], ms);
+        reply(h);
+        report_tables(hop_us);
+        snprintf(h, sizeof(h), "SVEND %u %u %u\n", chs[i], drop_addr, drop_bss);
+        reply(h);
+    }
+    wifi_sniff_stop();
+    snprintf(h, sizeof(h), "SURVEYEND %u\n", n);
     reply(h);
     wifi_sniff_release(restore_sdr);
     return true;

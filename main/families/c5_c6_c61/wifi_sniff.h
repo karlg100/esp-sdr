@@ -27,3 +27,6 @@ void wifi_sniff_release(void (*restore_sdr)(void));
 unsigned wifi_sniff_frames(void);
 void wifi_sniff_log(bool on);          /* switch the per-frame event log on/off (after a begin with log_frames) */
 void wifi_sniff_report_events(void);   /* "F <cb_us> <rx_ts> <rssi> <fmt> <rx_state> <len> <fc> <addr1> <addr2>" ... "FEND <n> <dropped>" */
+
+/* SURVEY <ms_per_channel> <ch,ch,...> (up to 64 channels): one handover, then each channel in turn; see wifi_sniff.c. */
+bool wifi_survey_command(const char *line, void (*restore_sdr)(void));

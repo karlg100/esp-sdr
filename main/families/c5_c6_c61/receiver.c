@@ -381,6 +381,7 @@ static void handle_command(char *line) {
     if (burst_version_command(line)) return;
     if (wifi_sniff_command(line, sniff_restore_sdr)) return;
     if (capsniff_command(line)) return;
+    if (wifi_survey_command(line, sniff_restore_sdr)) return;
     if (burst_gpio_command(line)) return;
 #ifdef RING_PROBE
     if (ring_probe_command(line)) return;
@@ -407,7 +408,7 @@ static void handle_command(char *line) {
 #else
             " LPF LPF12"
 #endif
-            " ALPF SNIFF CAPSNIFF"
+            " ALPF SNIFF CAPSNIFF SURVEY"
 #if CONFIG_ESP_SDR_UART_ENABLED
             " DUALSERIAL"
 #endif
