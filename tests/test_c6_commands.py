@@ -42,6 +42,11 @@ static bool ring_test(const char *s){return false;}
 static void reply(const char *s) { snprintf(response,sizeof(response),"%s",s); }
 static bool gain_command(const char *s) { return false; }
 static bool burst_version_command(const char *s) { return false; }
+static void sniff_restore_sdr(void) {}
+static bool capsniff_command(const char *s) { return false; }
+static bool wifi_sniff_command(const char *s, void (*r)(void)) { return false; }
+static bool wifi_survey_command(const char *s, void (*r)(void)) { return false; }
+static bool zb_survey_command(const char *s, void (*r)(void)) { return false; }
 static bool burst_gpio_command(const char *s) { return false; }
 static bool limits_command(const char *s) { return false; }
 static bool capture(unsigned n,unsigned d,unsigned f) { ++captures;last_samples=n;last_format=f;return true; }

@@ -43,6 +43,7 @@ void rx_recalibrate(unsigned mhz) {}
 #include <stdint.h>
 #include "rx_tuning.h"
 static unsigned calibrated, pll, writes;
+static unsigned calibrated_mhz;  /* file scope on C5/C6/C61 (the modem layer resets it) */
 static int pll_offset;
 static unsigned ckgen=0x63, cap=0xb0;
 unsigned ram_chip_i2c_readReg(unsigned b,unsigned h,unsigned r){assert(r==0);assert((b==0x65 && h==4)||(b==0x62 && h==1));return b==0x65?ckgen:cap;}
@@ -137,6 +138,7 @@ int main(void){
 bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
+static unsigned calibrated_mhz;  /* file scope on C5/C6/C61 (the modem layer resets it) */
 static unsigned ckgen, frequency_mhz, setups, delays;
 static bool rx_ready;
 enum {rx_prep=3, WIFI_SECOND_CHAN_NONE=0};
@@ -245,6 +247,7 @@ void rx_recalibrate(unsigned mhz) {}
 #define CONFIG_IDF_TARGET_ESP32C61 0
 #define CONFIG_IDF_TARGET_ESP32C6 0
 static unsigned frequency_mhz,rx_channel_mode,calls,calibrated,pll,last_mode;
+static unsigned calibrated_mhz;
 static bool rx_ready;
 static int rx_filter=-1;
 unsigned char phy_param[50]={[49]=2};
@@ -311,6 +314,11 @@ static unsigned burst_serial_baud(void){return 2000000;}
 static bool gain_command(const char *s){return false;}
 static bool ring_command(const char *s){return false;}
 static bool burst_version_command(const char *s) { return false; }
+static void sniff_restore_sdr(void) {}
+static bool capsniff_command(const char *s) { return false; }
+static bool wifi_sniff_command(const char *s, void (*r)(void)) { return false; }
+static bool wifi_survey_command(const char *s, void (*r)(void)) { return false; }
+static bool zb_survey_command(const char *s, void (*r)(void)) { return false; }
 static bool burst_gpio_command(const char *s){return false;}
 static bool limits_command(const char *s){return false;}
 static bool capture(unsigned n,unsigned d,unsigned f){return true;}

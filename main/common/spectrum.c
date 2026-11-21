@@ -28,7 +28,7 @@
 #endif
 #if CONFIG_IDF_TARGET_ESP32C5
 /* Heap, not static, on the C5: its static sections must end below the RF dump bank (sram_guard.ld), and the
- * air-scanner 802.15.4 driver needs the room. Allocated once by spectrum_fft_init(). */
+ * 802.15.4 survey driver (zb_sniff.c) needs the room. Allocated once by spectrum_fft_init(). */
 #include "esp_heap_caps.h"
 static int16_t *fft_data;
 #else

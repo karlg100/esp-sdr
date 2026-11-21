@@ -1,4 +1,4 @@
-/* Air-scanner 802.15.4 layer for the C5/C6: promiscuous IEEE 802.15.4 receive, channel by channel. See zb_sniff.h.
+/* 802.15.4 survey for the C5: promiscuous IEEE 802.15.4 receive, channel by channel. See zb_sniff.h.
  * Receive-only: promiscuous mode turns off address filtering and automatic ACKs, and nothing here calls transmit. */
 #include "zb_sniff.h"
 #include <stdio.h>

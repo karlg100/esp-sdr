@@ -77,3 +77,9 @@ The separate [S31 streaming firmware](s31-streaming.md#iq-packets) sends
 - On-chip spectra (`SPEC`, all chips): [spectrum.md](spectrum.md)
 - Continuous decimated I/Q on the S3 (`IQS`): [iq-stream.md](iq-stream.md)
 - Continuous I/Q over Ethernet/USB on the S31 (separate firmware): [s31-streaming.md](s31-streaming.md)
+
+## Modem layer (C5, C6, C61)
+
+`SNIFF`, `SURVEY`, `CAPSNIFF` and, on the C5, `ZSURVEY` lend the radio to the chip's own Wi-Fi or 802.15.4 receiver
+between captures. They report decoded networks, addresses and signal levels, then return the radio to the SDR.
+They are receive-only and advertised in `CAPS`. See [modem.md](modem.md).
