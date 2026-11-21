@@ -96,6 +96,10 @@ The firmware speaks a simple line-based protocol over native USB or UART
 protected by CRC32. The full command reference is in
 [protocol.md](docs/protocol.md).
 
+On the C5, C6 and C61, the same session can also borrow the chip's own Wi-Fi receiver, and on the C5 its 802.15.4
+(Zigbee/Thread) receiver, to decode what is on the air between captures: SSIDs, channel widths, PAN IDs, signal in
+dBm. It is receive-only. See [modem.md](docs/modem.md).
+
 A few practical notes:
 
 - **UART adapters** must handle 2 Mbaud reliably. Slow bridges (some CH340

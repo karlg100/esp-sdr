@@ -1,14 +1,14 @@
 #pragma once
 #include <stdbool.h>
 
-/* Air-scanner modem layer: listen with the chip's own Wi-Fi receiver (promiscuous mode) on one channel for a
+/* Modem layer: listen with the chip's own Wi-Fi receiver (promiscuous mode) on one channel for a
  * while, aggregate what it hears on chip, and report it. The radio is handed back to the SDR afterwards.
  *
  *   SNIFF <channel> <milliseconds>      channel 1-14 or 36-177, 50-10000 ms
  *
  * Reply (text lines, then SNIFFEND):
  *   SNIFF <channel> <ms>
- *   T <frames> <mgmt> <ctrl> <data> <bad_fcs> <bytes> <noise_floor_avg> <fmt counts: 11b 11ag ht vht he_su he_mu he_er he_tb> <busy_us> <switch_us>
+ *   T <frames> <mgmt> <ctrl> <data> <bad_fcs> <bytes> <noise_floor_avg> <fmt counts: 11b 11ag ht vht he_su he_mu he_er he_tb> <switch_us>
  *   B <bssid> <rssi_max> <rssi_avg> <beacons> <ds_channel> <ht_second> <vht_width> <vht_c0> <vht_c1> <he> <color> <interval_tu> <ssid_hex|->
  *   A <addr> <bssid|-> <frames> <bytes> <rssi_max> <rssi_avg> <retries> <fmt_mask> <color|-1> <role> <max_bw>
  *   SNIFFEND <status> <addresses_dropped> <bss_dropped>

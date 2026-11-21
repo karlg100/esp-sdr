@@ -1,4 +1,4 @@
-/* Air-scanner modem layer for the C5/C6/C61 burst receiver: promiscuous Wi-Fi sniffing with on-chip aggregation.
+/* Modem layer for the C5/C6/C61 burst receiver: promiscuous Wi-Fi sniffing with on-chip aggregation.
  * See wifi_sniff.h for the protocol. Everything here is receive-only: promiscuous mode never transmits. */
 #include "wifi_sniff.h"
 #include <stdio.h>

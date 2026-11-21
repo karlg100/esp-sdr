@@ -17,6 +17,11 @@ bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 static bool burst_version_command(const char *s) { return false; }
+static void sniff_restore_sdr(void) {}
+static bool capsniff_command(const char *s) { return false; }
+static bool wifi_sniff_command(const char *s, void (*r)(void)) { return false; }
+static bool wifi_survey_command(const char *s, void (*r)(void)) { return false; }
+static bool zb_survey_command(const char *s, void (*r)(void)) { return false; }
 static bool burst_gpio_command(const char *s) { return false; }
 #include <inttypes.h>
 #include <stdio.h>
