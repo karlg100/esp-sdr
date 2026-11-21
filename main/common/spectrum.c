@@ -26,7 +26,14 @@
 #else
 #define SPEC_STORAGE
 #endif
+#if CONFIG_IDF_TARGET_ESP32C5
+/* Heap, not static, on the C5: its static sections must end below the RF dump bank (sram_guard.ld), and the
+ * air-scanner 802.15.4 driver needs the room. Allocated once by spectrum_fft_init(). */
+#include "esp_heap_caps.h"
+static int16_t *fft_data;
+#else
 static int16_t fft_data[2 * MAX_FFT] __attribute__((aligned(16))) SPEC_STORAGE;
+#endif
 static int16_t window[MAX_FFT] SPEC_STORAGE;
 /* Same workspace size for both detectors. Max-hold never needs floats;
  * mean accumulation retains fractional precision without extra SRAM. */
@@ -37,13 +44,21 @@ static union {
 static uint8_t frame[HEADER_BYTES + MAX_FFT + 4] SPEC_STORAGE;
 static unsigned setup_n;
 static bool ready;
+bool spectrum_fft_init(void);
 spectrum_workspace_t spectrum_workspace(void) {
     setup_n = 0;
+#if CONFIG_IDF_TARGET_ESP32C5
+    spectrum_fft_init();
+#endif
     return (spectrum_workspace_t){fft_data, window, powers.mean, frame};
 }
 
 static int16_t twiddles[MAX_FFT] __attribute__((aligned(16))) SPEC_STORAGE;
 bool spectrum_fft_init(void) {
+#if CONFIG_IDF_TARGET_ESP32C5
+    if (!fft_data) fft_data = heap_caps_aligned_alloc(16, 2 * MAX_FFT * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!fft_data) return false;
+#endif
     if (!ready) ready = dsps_fft2r_init_sc16(twiddles, MAX_FFT) == ESP_OK;
     return ready;
 }
